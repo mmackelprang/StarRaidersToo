@@ -29,6 +29,10 @@ import { PhotonSoundPool } from '@/audio/PhotonSoundPool';
 import { SoundEffects } from '@/audio/SoundEffects';
 import { VoiceAnnouncer } from '@/audio/VoiceAnnouncer';
 import { WarpSoundSequence } from '@/audio/WarpSoundSequence';
+import { GamepadController } from '@/input/GamepadController';
+import { GalacticMap3D } from '@/ui/GalacticMap3D';
+import { PostProcessing } from '@/scene/PostProcessing';
+import { HapticFeedback } from '@/core/HapticFeedback';
 import { radiansToDegrees, randIntRange } from '@/utils/MathUtils';
 
 export class Game {
@@ -55,6 +59,9 @@ export class Game {
   private soundEffects!: SoundEffects;
   private voiceAnnouncer!: VoiceAnnouncer;
   private warpSoundSequence!: WarpSoundSequence;
+  private gamepadController!: GamepadController;
+  private galacticMap3D!: GalacticMap3D;
+  private postProcessing!: PostProcessing;
 
   private gameOver = false;
   private paused = false;
@@ -75,6 +82,7 @@ export class Game {
     this.setupScene();
     this.setupInput();
     this.setupUI();
+    this.setupPostProcessing();
     this.startGameLoop();
   }
 
@@ -121,12 +129,14 @@ export class Game {
     // Combat system
     this.combatManager = new CombatManager(scene, this.sectorObjects.node, {
       onPlayerDestroyed: (cause) => {
+        HapticFeedback.oldSchool();
         this.endGame(cause === 'energy'
           ? END_GAME_CAUSES.energyDepleted
           : END_GAME_CAUSES.playerDestroyed);
       },
       onEnemyDestroyed: (enemy) => {
         this.soundEffects.explosion();
+        HapticFeedback.error();
         this.galaxyModel.map[this.ship.currentSectorNumber].numberOfSectorObjects -= 1;
         if (this.galaxyModel.map[this.ship.currentSectorNumber].numberOfSectorObjects <= 0) {
           this.galaxyModel.clearSector(this.ship.currentSectorNumber);
@@ -140,6 +150,7 @@ export class Game {
       onPlayerShieldHit: () => {
         this.hud.shieldFlash();
         this.soundEffects.shieldHit();
+        HapticFeedback.medium();
       },
       onSectorCleared: () => {
         this.alertSystem.deactivateAlert();
@@ -197,6 +208,48 @@ export class Game {
           break;
       }
     });
+
+    // Gamepad controller
+    this.gamepadController = new GamepadController({
+      onFire: () => {
+        if (!this.ship.isCurrentlyInWarp && !this.gameOver) {
+          const fired = this.combatManager.fireZylonTorpedo(
+            this.ship,
+            difficultyScalar(this.difficulty),
+            this.viewModeManager.currentMode,
+          );
+          if (fired) {
+            this.photonSoundPool.play();
+          } else {
+            this.photonSoundPool.playFail();
+          }
+        }
+      },
+      onToggleShields: () => {
+        this.ship.shieldsAreUp = !this.ship.shieldsAreUp;
+        if (this.ship.shieldsAreUp) {
+          this.soundEffects.shieldsUp();
+        } else {
+          this.soundEffects.shieldsDown();
+        }
+      },
+      onToggleView: () => {
+        this.viewModeManager.toggleForeAft();
+        this.soundEffects.beep();
+      },
+      onToggleGalacticMap: () => {
+        this.toggleGalacticMap();
+        this.soundEffects.beep();
+      },
+    });
+
+    // Hide touch joystick when gamepad connects, show when disconnects
+    this.gamepadController.onConnect(() => {
+      this.inputManager.hideJoystick();
+    });
+    this.gamepadController.onDisconnect(() => {
+      this.inputManager.showJoystick();
+    });
   }
 
   private setupUI(): void {
@@ -225,6 +278,18 @@ export class Game {
         );
       },
     });
+
+    // 3D galactic map overlay
+    this.galacticMap3D = new GalacticMap3D(parent);
+    this.galacticMap3D.setSectorSelectedCallback((sector) => {
+      this.ship.targetSectorNumber = sector;
+      this.soundEffects.beep();
+    });
+  }
+
+  private setupPostProcessing(): void {
+    const canvas = this.ctx.engine.getRenderingCanvas()!;
+    this.postProcessing = new PostProcessing(canvas);
   }
 
   private toggleGalacticMap(): void {
@@ -275,11 +340,13 @@ export class Game {
     // Max speed during warp
     this.ship.currentSpeed = 9;
 
-    // Play warp sound sequence
+    // Play warp sound sequence and enable motion blur
     this.warpSoundSequence.play();
+    this.postProcessing.enableMotionBlur();
 
     // Start warp visual — resolves after 6 seconds
     this.warpEffect.start().then(() => {
+      this.postProcessing.disableMotionBlur();
       if (this.gameOver) return;
 
       // Arrive at destination
@@ -389,7 +456,17 @@ export class Game {
     if (this.viewModeManager.currentMode === ViewMode.GalacticMap) return;
 
     const input = this.inputManager.getInput();
-    this.sectorObjects.applyJoystickInput(input.xThrust, input.yThrust);
+    let xThrust = input.xThrust;
+    let yThrust = input.yThrust;
+
+    // Merge gamepad stick input if connected
+    if (this.gamepadController.isConnected) {
+      const gpInput = this.gamepadController.poll();
+      xThrust += gpInput.xThrust;
+      yThrust += gpInput.yThrust;
+    }
+
+    this.sectorObjects.applyJoystickInput(xThrust, yThrust);
   }
 
   dispose(): void {
@@ -397,11 +474,14 @@ export class Game {
     this.starfieldManager.dispose();
     this.warpEffect.dispose();
     this.inputManager.dispose();
+    this.gamepadController.dispose();
     this.hud.dispose();
     this.scannerDisplay.dispose();
     this.tacticalDisplay.dispose();
     this.alertSystem.dispose();
     this.galacticMapOverlay.dispose();
+    this.galacticMap3D.dispose();
+    this.postProcessing.dispose();
     this.engineSound.dispose();
     this.photonSoundPool.dispose();
     this.soundEffects.dispose();

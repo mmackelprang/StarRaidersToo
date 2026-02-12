@@ -66,6 +66,16 @@ export class InputManager {
     return this.joystick;
   }
 
+  /** Hide touch joystick (when gamepad connects) */
+  hideJoystick(): void {
+    this.joystick.hide();
+  }
+
+  /** Show touch joystick (when gamepad disconnects) */
+  showJoystick(): void {
+    this.joystick.show();
+  }
+
   dispose(): void {
     this.joystick.dispose();
   }

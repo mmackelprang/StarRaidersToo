@@ -197,6 +197,14 @@ export class JoystickController {
     this.container.style.display = visible ? 'block' : 'none';
   }
 
+  hide(): void {
+    this.setVisible(false);
+  }
+
+  show(): void {
+    this.setVisible(true);
+  }
+
   dispose(): void {
     this.container.remove();
   }
