@@ -22,6 +22,7 @@ import { CombatManager } from '@/combat/CombatManager';
 import { EntitySpawner } from '@/scene/EntitySpawner';
 import { Difficulty, difficultyScalar, ViewMode } from '@/core/types';
 import { GameStateManager } from '@/core/GameStateManager';
+import { END_GAME_CAUSES } from '@/core/RankCalculator';
 import { AudioManager } from '@/audio/AudioManager';
 import { EngineSound } from '@/audio/EngineSound';
 import { PhotonSoundPool } from '@/audio/PhotonSoundPool';
@@ -58,9 +59,17 @@ export class Game {
   private gameOver = false;
   private paused = false;
   private lastFrameTime = 0;
+  private onGameEnd: ((cause: string, occupiedRatio: number, diffScalar: number) => void) | null = null;
 
-  constructor(canvas: HTMLCanvasElement) {
-    this.stateManager = new GameStateManager();
+  constructor(
+    canvas: HTMLCanvasElement,
+    options?: {
+      stateManager?: GameStateManager;
+      onGameEnd?: (cause: string, occupiedRatio: number, diffScalar: number) => void;
+    },
+  ) {
+    this.stateManager = options?.stateManager ?? new GameStateManager();
+    this.onGameEnd = options?.onGameEnd ?? null;
     this.ctx = createScene(canvas);
     this.setupAudio();
     this.setupScene();
@@ -112,10 +121,9 @@ export class Game {
     // Combat system
     this.combatManager = new CombatManager(scene, this.sectorObjects.node, {
       onPlayerDestroyed: (cause) => {
-        this.gameOver = true;
-        this.soundEffects.deathExplosion();
-        this.engineSound.stop();
-        // Phase 8 will add game over screen
+        this.endGame(cause === 'energy'
+          ? END_GAME_CAUSES.energyDepleted
+          : END_GAME_CAUSES.playerDestroyed);
       },
       onEnemyDestroyed: (enemy) => {
         this.soundEffects.explosion();
@@ -355,6 +363,21 @@ export class Game {
 
       scene.render();
     });
+  }
+
+  /** End the game with a cause message and notify the screen manager */
+  private endGame(cause: string): void {
+    if (this.gameOver) return;
+    this.gameOver = true;
+    this.soundEffects.deathExplosion();
+    this.engineSound.stop();
+
+    const ratio = this.galaxyModel.occupiedSectorRatio;
+    const scalar = difficultyScalar(this.difficulty);
+
+    if (this.onGameEnd) {
+      this.onGameEnd(cause, ratio, scalar);
+    }
   }
 
   /**
