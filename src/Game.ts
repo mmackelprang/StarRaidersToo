@@ -33,6 +33,9 @@ import { GamepadController } from '@/input/GamepadController';
 import { GalacticMap3D } from '@/ui/GalacticMap3D';
 import { PostProcessing } from '@/scene/PostProcessing';
 import { HapticFeedback } from '@/core/HapticFeedback';
+import { TroopMovementManager } from '@/galaxy/TroopMovementManager';
+import { PerformanceMonitor } from '@/core/PerformanceMonitor';
+import { SectorGridType } from '@/core/types';
 import { radiansToDegrees, randIntRange } from '@/utils/MathUtils';
 
 export class Game {
@@ -62,6 +65,8 @@ export class Game {
   private gamepadController!: GamepadController;
   private galacticMap3D!: GalacticMap3D;
   private postProcessing!: PostProcessing;
+  private troopMovement!: TroopMovementManager;
+  private perfMonitor: PerformanceMonitor;
 
   private gameOver = false;
   private paused = false;
@@ -77,6 +82,7 @@ export class Game {
   ) {
     this.stateManager = options?.stateManager ?? new GameStateManager();
     this.onGameEnd = options?.onGameEnd ?? null;
+    this.perfMonitor = new PerformanceMonitor();
     this.ctx = createScene(canvas);
     this.setupAudio();
     this.setupScene();
@@ -159,6 +165,9 @@ export class Game {
     });
 
     this.entitySpawner = new EntitySpawner(this.combatManager);
+
+    // Troop movement manager
+    this.troopMovement = new TroopMovementManager(difficultyScalar(this.difficulty));
 
     // Start with speed 2 (matches iOS setupShip line 813)
     this.ship.currentSpeed = 2;
@@ -376,7 +385,13 @@ export class Game {
       const deltaSeconds = (now - this.lastFrameTime) / 1000;
       this.lastFrameTime = now;
 
+      this.perfMonitor.recordFrame();
+
       if (!this.gameOver && !this.paused) {
+        // Troop movements and game-end checks
+        this.troopMovement.update(this.galaxyModel);
+        this.checkForGameEnd();
+
         // Phase 1: updateAtTime equivalent
         this.starfieldManager.updateStars(this.ship.currentSpeed);
 
@@ -430,6 +445,31 @@ export class Game {
 
       scene.render();
     });
+  }
+
+  /**
+   * Check for victory or loss conditions.
+   * Ported from ZylonGameViewController.checkForGameEnd() lines 1078-1088.
+   */
+  private checkForGameEnd(): void {
+    if (this.gameOver) return;
+
+    const stationCount = this.galaxyModel.map.filter(
+      (s) => s.sectorType === SectorGridType.Starbase,
+    ).length;
+    const enemyCount = this.galaxyModel.map.filter(
+      (s) => s.sectorType === SectorGridType.Enemy ||
+             s.sectorType === SectorGridType.Enemy2 ||
+             s.sectorType === SectorGridType.Enemy3,
+    ).length;
+
+    if (stationCount === 0) {
+      this.endGame(END_GAME_CAUSES.allStationsDestroyed);
+    } else if (enemyCount === 0) {
+      this.endGame(END_GAME_CAUSES.victory);
+    } else if (this.ship.energyStore <= 0) {
+      this.endGame(END_GAME_CAUSES.energyDepleted);
+    }
   }
 
   /** End the game with a cause message and notify the screen manager */
