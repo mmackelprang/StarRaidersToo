@@ -1,0 +1,27 @@
+{
+  "name": "star-raiders-too",
+  "version": "0.1.0",
+  "description": "Port of Zylon Defenders to TypeScript — a Star Raiders tribute game",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mmackelprang/StarRaidersToo.git"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "vite": "^6.1.0",
+    "vitest": "^3.0.0"
+  },
+  "dependencies": {
+    "@babylonjs/core": "^7.41.0",
+    "@babylonjs/materials": "^7.41.0"
+  }
+}
