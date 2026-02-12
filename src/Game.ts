@@ -16,12 +16,15 @@ import { InputManager } from '@/input/InputManager';
 import { ViewModeManager } from '@/ui/ViewModeManager';
 import { HudOverlay } from '@/ui/HudOverlay';
 import { GalacticMapOverlay } from '@/ui/GalacticMapOverlay';
+import { ScannerDisplay } from '@/ui/ScannerDisplay';
+import { TacticalDisplay } from '@/ui/TacticalDisplay';
+import { AlertSystem } from '@/ui/AlertSystem';
 import { GalaxyMapModel } from '@/galaxy/GalaxyMapModel';
 import { CombatManager } from '@/combat/CombatManager';
 import { EntitySpawner } from '@/scene/EntitySpawner';
 import { Difficulty, difficultyScalar, ViewMode } from '@/core/types';
 import { GameStateManager } from '@/core/GameStateManager';
-import { randIntRange } from '@/utils/MathUtils';
+import { radiansToDegrees, randIntRange } from '@/utils/MathUtils';
 
 export class Game {
   private ctx: SceneContext;
@@ -34,6 +37,9 @@ export class Game {
   private viewModeManager!: ViewModeManager;
   private hud!: HudOverlay;
   private galacticMapOverlay!: GalacticMapOverlay;
+  private scannerDisplay!: ScannerDisplay;
+  private tacticalDisplay!: TacticalDisplay;
+  private alertSystem!: AlertSystem;
   private galaxyModel!: GalaxyMapModel;
   private combatManager!: CombatManager;
   private entitySpawner!: EntitySpawner;
@@ -99,10 +105,11 @@ export class Game {
         this.galaxyModel.clearSector(this.ship.currentSectorNumber);
       },
       onPlayerShieldHit: () => {
-        // Phase 5 will add shield flash + sound
+        this.hud.shieldFlash();
       },
       onSectorCleared: () => {
-        // Phase 5 will add telemetry message
+        this.alertSystem.deactivateAlert();
+        this.hud.updateEnemyIndicator(0);
       },
     });
 
@@ -125,6 +132,15 @@ export class Game {
         case 'g':
           this.toggleGalacticMap();
           break;
+        case 't':
+          // Toggle tactical display
+          this.tacticalDisplay.toggle();
+          if (this.tacticalDisplay.engaged) {
+            this.scannerDisplay.show();
+          } else {
+            this.scannerDisplay.hide();
+          }
+          break;
         case ' ':
           // Fire torpedo
           if (!this.ship.isCurrentlyInWarp && !this.gameOver) {
@@ -143,6 +159,9 @@ export class Game {
     const parent = this.ctx.engine.getRenderingCanvas()!.parentElement!;
 
     this.hud = new HudOverlay(parent);
+    this.scannerDisplay = new ScannerDisplay(parent);
+    this.tacticalDisplay = new TacticalDisplay(parent);
+    this.alertSystem = new AlertSystem(parent);
 
     this.galacticMapOverlay = new GalacticMapOverlay(parent, {
       onTargetChanged: (sectorIndex) => {
@@ -257,7 +276,7 @@ export class Game {
         }
         this.ship.updateShipSystems(difficultyScalar(this.difficulty));
 
-        // Phase 3: Update HUD
+        // Update HUD
         this.hud.update(
           this.ship.energyStore,
           this.ship.shieldStrength,
@@ -266,6 +285,27 @@ export class Game {
           this.ship.targetSectorNumber,
           this.ship.isCurrentlyInWarp,
         );
+        this.hud.updateEnemyIndicator(this.combatManager.enemyCount);
+
+        // Update scanner
+        this.scannerDisplay.render(deltaSeconds);
+
+        // Update tactical display
+        if (this.tacticalDisplay.engaged) {
+          const eulerX = this.sectorObjects.node.rotationQuaternion
+            ? radiansToDegrees(this.sectorObjects.node.rotation.x) : 0;
+          const eulerY = this.sectorObjects.node.rotationQuaternion
+            ? radiansToDegrees(this.sectorObjects.node.rotation.y) : 0;
+          this.tacticalDisplay.update(
+            eulerX,
+            eulerY,
+            this.ship.shieldsAreUp,
+            this.ship.shieldStrength,
+            this.ship.energyStore,
+            this.combatManager.enemyCount,
+            null, // Phase 4+ will compute nearest enemy distance
+          );
+        }
       }
 
       scene.render();
@@ -290,6 +330,9 @@ export class Game {
     this.warpEffect.dispose();
     this.inputManager.dispose();
     this.hud.dispose();
+    this.scannerDisplay.dispose();
+    this.tacticalDisplay.dispose();
+    this.alertSystem.dispose();
     this.galacticMapOverlay.dispose();
     this.ctx.engine.dispose();
   }
