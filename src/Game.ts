@@ -10,11 +10,15 @@ import { SectorObjectsNode } from '@/scene/SectorObjectsNode';
 import { CameraRig } from '@/scene/CameraRig';
 import { WarpEffect } from '@/scene/WarpEffect';
 import { ZylonShip } from '@/entities/ZylonShip';
+import { HumonShip } from '@/entities/HumonShip';
+import { ZylonStation } from '@/entities/ZylonStation';
 import { InputManager } from '@/input/InputManager';
 import { ViewModeManager } from '@/ui/ViewModeManager';
 import { HudOverlay } from '@/ui/HudOverlay';
 import { GalacticMapOverlay } from '@/ui/GalacticMapOverlay';
 import { GalaxyMapModel } from '@/galaxy/GalaxyMapModel';
+import { CombatManager } from '@/combat/CombatManager';
+import { EntitySpawner } from '@/scene/EntitySpawner';
 import { Difficulty, difficultyScalar, ViewMode } from '@/core/types';
 import { GameStateManager } from '@/core/GameStateManager';
 import { randIntRange } from '@/utils/MathUtils';
@@ -31,10 +35,13 @@ export class Game {
   private hud!: HudOverlay;
   private galacticMapOverlay!: GalacticMapOverlay;
   private galaxyModel!: GalaxyMapModel;
+  private combatManager!: CombatManager;
+  private entitySpawner!: EntitySpawner;
   private stateManager: GameStateManager;
 
   private gameOver = false;
   private paused = false;
+  private lastFrameTime = 0;
 
   constructor(canvas: HTMLCanvasElement) {
     this.stateManager = new GameStateManager();
@@ -76,6 +83,31 @@ export class Game {
     // Galaxy model
     this.galaxyModel = new GalaxyMapModel(difficultyScalar(this.difficulty));
 
+    // Combat system
+    this.combatManager = new CombatManager(scene, this.sectorObjects.node, {
+      onPlayerDestroyed: (cause) => {
+        this.gameOver = true;
+        // Phase 8 will add game over screen
+      },
+      onEnemyDestroyed: (enemy) => {
+        this.galaxyModel.map[this.ship.currentSectorNumber].numberOfSectorObjects -= 1;
+        if (this.galaxyModel.map[this.ship.currentSectorNumber].numberOfSectorObjects <= 0) {
+          this.galaxyModel.clearSector(this.ship.currentSectorNumber);
+        }
+      },
+      onStationDestroyed: () => {
+        this.galaxyModel.clearSector(this.ship.currentSectorNumber);
+      },
+      onPlayerShieldHit: () => {
+        // Phase 5 will add shield flash + sound
+      },
+      onSectorCleared: () => {
+        // Phase 5 will add telemetry message
+      },
+    });
+
+    this.entitySpawner = new EntitySpawner(this.combatManager);
+
     // Start with speed 2 (matches iOS setupShip line 813)
     this.ship.currentSpeed = 2;
   }
@@ -84,7 +116,7 @@ export class Game {
     this.inputManager = new InputManager(document.body);
     this.inputManager.invertedAxis = this.stateManager.settings.invertedAxis;
 
-    // Keyboard shortcuts for view toggling (dev convenience)
+    // Keyboard shortcuts
     window.addEventListener('keydown', (e) => {
       switch (e.key.toLowerCase()) {
         case 'v':
@@ -92,6 +124,16 @@ export class Game {
           break;
         case 'g':
           this.toggleGalacticMap();
+          break;
+        case ' ':
+          // Fire torpedo
+          if (!this.ship.isCurrentlyInWarp && !this.gameOver) {
+            this.combatManager.fireZylonTorpedo(
+              this.ship,
+              difficultyScalar(this.difficulty),
+              this.viewModeManager.currentMode,
+            );
+          }
           break;
       }
     });
@@ -156,6 +198,9 @@ export class Game {
     this.ship.energyStore -= energyUsed;
     this.ship.isCurrentlyInWarp = true;
 
+    // Clear current sector entities
+    this.combatManager.clearSector();
+
     // Force forward view
     if (this.viewModeManager.currentMode === ViewMode.GalacticMap) {
       this.toggleGalacticMap();
@@ -180,38 +225,21 @@ export class Game {
       this.ship.targetSectorNumber = randIntRange(0, 126);
 
       // Populate sector after 1 more second (7s total from warp start)
-      setTimeout(() => this.populateSector(), 1000);
+      setTimeout(() => {
+        this.entitySpawner.populateSector(this.ship, this.galaxyModel);
+      }, 1000);
     });
-  }
-
-  /**
-   * Set up the new sector after warp arrival.
-   * Ported from ZylonGameViewController.populateSector() lines 377-428.
-   */
-  private populateSector(): void {
-    const sector = this.galaxyModel.map[this.ship.currentSectorNumber];
-
-    switch (sector.sectorType) {
-      case 'starbase':
-        this.ship.currentSpeed = 0;
-        // Phase 4+ will spawn starbase model and begin repair beam
-        break;
-      case 'enemy':
-      case 'enemy2':
-      case 'enemy3':
-        this.ship.currentSpeed = 2;
-        // Phase 4+ will spawn enemy ships from sector.enemyTypes
-        break;
-      default:
-        this.ship.currentSpeed = 3;
-        break;
-    }
   }
 
   private startGameLoop(): void {
     const { engine, scene } = this.ctx;
+    this.lastFrameTime = performance.now();
 
     engine.runRenderLoop(() => {
+      const now = performance.now();
+      const deltaSeconds = (now - this.lastFrameTime) / 1000;
+      this.lastFrameTime = now;
+
       if (!this.gameOver && !this.paused) {
         // Phase 1: updateAtTime equivalent
         this.starfieldManager.updateStars(this.ship.currentSpeed);
@@ -219,6 +247,13 @@ export class Game {
         // Phase 2: didRenderScene equivalent — apply input and update ship
         if (!this.ship.isCurrentlyInWarp) {
           this.turnShip();
+
+          // Phase 4: Combat update
+          this.combatManager.update(
+            this.ship,
+            difficultyScalar(this.difficulty),
+            deltaSeconds,
+          );
         }
         this.ship.updateShipSystems(difficultyScalar(this.difficulty));
 
@@ -250,6 +285,7 @@ export class Game {
   }
 
   dispose(): void {
+    this.combatManager.dispose();
     this.starfieldManager.dispose();
     this.warpEffect.dispose();
     this.inputManager.dispose();
