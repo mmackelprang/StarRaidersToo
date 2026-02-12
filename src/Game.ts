@@ -3,25 +3,33 @@
  * Creates the Babylon.js scene, manages the game loop, and coordinates subsystems.
  */
 
-import { FreeCamera } from '@babylonjs/core/Cameras/freeCamera';
-import { Vector3 } from '@babylonjs/core/Maths/math.vector';
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
 import { createScene, SceneContext } from '@/scene/SceneSetup';
 import { StarfieldManager } from '@/scene/StarfieldManager';
-import { Constants } from '@/core/Constants';
+import { SectorObjectsNode } from '@/scene/SectorObjectsNode';
+import { CameraRig } from '@/scene/CameraRig';
+import { ZylonShip } from '@/entities/ZylonShip';
+import { InputManager } from '@/input/InputManager';
+import { ViewModeManager } from '@/ui/ViewModeManager';
+import { Difficulty, difficultyScalar, ViewMode } from '@/core/types';
 
 export class Game {
   private ctx: SceneContext;
-  private sectorObjectsNode!: TransformNode;
+  private sectorObjects!: SectorObjectsNode;
   private starfieldManager!: StarfieldManager;
-  private camera!: FreeCamera;
+  private cameraRig!: CameraRig;
+  private ship!: ZylonShip;
+  private inputManager!: InputManager;
+  private viewModeManager!: ViewModeManager;
 
-  /** Placeholder speed for Phase 1 starfield animation demo */
-  private currentSpeed = 2;
+  private gameOver = false;
+  private paused = false;
+  private difficulty = Difficulty.Novice;
 
   constructor(canvas: HTMLCanvasElement) {
     this.ctx = createScene(canvas);
     this.setupScene();
+    this.setupInput();
     this.startGameLoop();
   }
 
@@ -30,43 +38,74 @@ export class Game {
 
     // The sectorObjectsNode is the pivoting container.
     // Ship sits at origin; this node rotates to simulate steering.
-    this.sectorObjectsNode = new TransformNode('sectorObjectsNode', scene);
+    this.sectorObjects = new SectorObjectsNode(scene);
 
-    // Forward camera at origin, looking down -Z
-    this.camera = new FreeCamera(
-      'forwardCamera',
-      Vector3.Zero(),
-      scene,
-    );
-    this.camera.maxZ = Constants.cameraFalloff;
-    this.camera.minZ = 0.1;
-    this.camera.setTarget(new Vector3(0, 0, -1));
+    // Player ship (invisible, at origin — camera POV)
+    this.ship = new ZylonShip(scene);
+    const shipNode = new TransformNode('shipTransform', scene);
+    this.ship.parent = shipNode;
 
-    // Disable default camera controls — input will be handled by our joystick
-    this.camera.inputs.clear();
+    // Camera rig attached to the ship
+    this.cameraRig = new CameraRig(scene, shipNode);
 
-    scene.activeCamera = this.camera;
+    // View mode manager
+    this.viewModeManager = new ViewModeManager(this.cameraRig);
 
-    // Create starfield
-    this.starfieldManager = new StarfieldManager(
-      scene,
-      this.sectorObjectsNode,
-    );
+    // Create starfield attached to sectorObjectsNode
+    this.starfieldManager = new StarfieldManager(scene, this.sectorObjects.node);
+
+    // Start with speed 2 (matches iOS setupShip line 813)
+    this.ship.currentSpeed = 2;
+  }
+
+  private setupInput(): void {
+    this.inputManager = new InputManager(document.body);
+
+    // Keyboard shortcuts for view toggling (dev convenience)
+    window.addEventListener('keydown', (e) => {
+      switch (e.key.toLowerCase()) {
+        case 'v':
+          this.viewModeManager.toggleForeAft();
+          break;
+        case 'g':
+          this.viewModeManager.toggleGalacticMap();
+          break;
+      }
+    });
   }
 
   private startGameLoop(): void {
     const { engine, scene } = this.ctx;
 
     engine.runRenderLoop(() => {
-      // Pre-render update (equivalent to renderer(_:updateAtTime:))
-      this.starfieldManager.updateStars(this.currentSpeed);
+      if (!this.gameOver && !this.paused) {
+        // Phase 1: updateAtTime equivalent
+        this.starfieldManager.updateStars(this.ship.currentSpeed);
+
+        // Phase 2: didRenderScene equivalent — apply input and update ship
+        this.turnShip();
+        this.ship.updateShipSystems(difficultyScalar(this.difficulty));
+      }
 
       scene.render();
     });
   }
 
+  /**
+   * Apply joystick/keyboard input to rotate the sectorObjectsNode.
+   * Ported from ZylonGameViewController.turnShip() lines 1219-1239.
+   */
+  private turnShip(): void {
+    // Only apply steering in fore or aft view
+    if (this.viewModeManager.currentMode === ViewMode.GalacticMap) return;
+
+    const input = this.inputManager.getInput();
+    this.sectorObjects.applyJoystickInput(input.xThrust, input.yThrust);
+  }
+
   dispose(): void {
     this.starfieldManager.dispose();
+    this.inputManager.dispose();
     this.ctx.engine.dispose();
   }
 }
