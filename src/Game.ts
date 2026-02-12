@@ -10,8 +10,6 @@ import { SectorObjectsNode } from '@/scene/SectorObjectsNode';
 import { CameraRig } from '@/scene/CameraRig';
 import { WarpEffect } from '@/scene/WarpEffect';
 import { ZylonShip } from '@/entities/ZylonShip';
-import { HumonShip } from '@/entities/HumonShip';
-import { ZylonStation } from '@/entities/ZylonStation';
 import { InputManager } from '@/input/InputManager';
 import { ViewModeManager } from '@/ui/ViewModeManager';
 import { HudOverlay } from '@/ui/HudOverlay';
@@ -24,6 +22,12 @@ import { CombatManager } from '@/combat/CombatManager';
 import { EntitySpawner } from '@/scene/EntitySpawner';
 import { Difficulty, difficultyScalar, ViewMode } from '@/core/types';
 import { GameStateManager } from '@/core/GameStateManager';
+import { AudioManager } from '@/audio/AudioManager';
+import { EngineSound } from '@/audio/EngineSound';
+import { PhotonSoundPool } from '@/audio/PhotonSoundPool';
+import { SoundEffects } from '@/audio/SoundEffects';
+import { VoiceAnnouncer } from '@/audio/VoiceAnnouncer';
+import { WarpSoundSequence } from '@/audio/WarpSoundSequence';
 import { radiansToDegrees, randIntRange } from '@/utils/MathUtils';
 
 export class Game {
@@ -44,6 +48,12 @@ export class Game {
   private combatManager!: CombatManager;
   private entitySpawner!: EntitySpawner;
   private stateManager: GameStateManager;
+  private audioManager!: AudioManager;
+  private engineSound!: EngineSound;
+  private photonSoundPool!: PhotonSoundPool;
+  private soundEffects!: SoundEffects;
+  private voiceAnnouncer!: VoiceAnnouncer;
+  private warpSoundSequence!: WarpSoundSequence;
 
   private gameOver = false;
   private paused = false;
@@ -52,6 +62,7 @@ export class Game {
   constructor(canvas: HTMLCanvasElement) {
     this.stateManager = new GameStateManager();
     this.ctx = createScene(canvas);
+    this.setupAudio();
     this.setupScene();
     this.setupInput();
     this.setupUI();
@@ -60,6 +71,15 @@ export class Game {
 
   private get difficulty(): Difficulty {
     return this.stateManager.settings.difficulty;
+  }
+
+  private setupAudio(): void {
+    this.audioManager = new AudioManager();
+    this.engineSound = new EngineSound(this.audioManager);
+    this.photonSoundPool = new PhotonSoundPool(this.audioManager);
+    this.soundEffects = new SoundEffects(this.audioManager);
+    this.voiceAnnouncer = new VoiceAnnouncer(this.audioManager);
+    this.warpSoundSequence = new WarpSoundSequence(this.audioManager);
   }
 
   private setupScene(): void {
@@ -93,9 +113,12 @@ export class Game {
     this.combatManager = new CombatManager(scene, this.sectorObjects.node, {
       onPlayerDestroyed: (cause) => {
         this.gameOver = true;
+        this.soundEffects.deathExplosion();
+        this.engineSound.stop();
         // Phase 8 will add game over screen
       },
       onEnemyDestroyed: (enemy) => {
+        this.soundEffects.explosion();
         this.galaxyModel.map[this.ship.currentSectorNumber].numberOfSectorObjects -= 1;
         if (this.galaxyModel.map[this.ship.currentSectorNumber].numberOfSectorObjects <= 0) {
           this.galaxyModel.clearSector(this.ship.currentSectorNumber);
@@ -103,9 +126,12 @@ export class Game {
       },
       onStationDestroyed: () => {
         this.galaxyModel.clearSector(this.ship.currentSectorNumber);
+        this.soundEffects.explosion();
+        setTimeout(() => this.soundEffects.badIdea(), 1700);
       },
       onPlayerShieldHit: () => {
         this.hud.shieldFlash();
+        this.soundEffects.shieldHit();
       },
       onSectorCleared: () => {
         this.alertSystem.deactivateAlert();
@@ -117,6 +143,9 @@ export class Game {
 
     // Start with speed 2 (matches iOS setupShip line 813)
     this.ship.currentSpeed = 2;
+
+    // Start engine hum
+    this.engineSound.start();
   }
 
   private setupInput(): void {
@@ -128,9 +157,11 @@ export class Game {
       switch (e.key.toLowerCase()) {
         case 'v':
           this.viewModeManager.toggleForeAft();
+          this.soundEffects.beep();
           break;
         case 'g':
           this.toggleGalacticMap();
+          this.soundEffects.beep();
           break;
         case 't':
           // Toggle tactical display
@@ -144,11 +175,16 @@ export class Game {
         case ' ':
           // Fire torpedo
           if (!this.ship.isCurrentlyInWarp && !this.gameOver) {
-            this.combatManager.fireZylonTorpedo(
+            const fired = this.combatManager.fireZylonTorpedo(
               this.ship,
               difficultyScalar(this.difficulty),
               this.viewModeManager.currentMode,
             );
+            if (fired) {
+              this.photonSoundPool.play();
+            } else {
+              this.photonSoundPool.playFail();
+            }
           }
           break;
       }
@@ -231,6 +267,9 @@ export class Game {
     // Max speed during warp
     this.ship.currentSpeed = 9;
 
+    // Play warp sound sequence
+    this.warpSoundSequence.play();
+
     // Start warp visual — resolves after 6 seconds
     this.warpEffect.start().then(() => {
       if (this.gameOver) return;
@@ -242,6 +281,9 @@ export class Game {
 
       // Pick a new random target
       this.ship.targetSectorNumber = randIntRange(0, 126);
+
+      // Announce sector arrival
+      this.voiceAnnouncer.announceSector(targetAtWarp);
 
       // Populate sector after 1 more second (7s total from warp start)
       setTimeout(() => {
@@ -275,6 +317,9 @@ export class Game {
           );
         }
         this.ship.updateShipSystems(difficultyScalar(this.difficulty));
+
+        // Update engine sound volume based on speed
+        this.engineSound.setSpeed(this.ship.currentSpeed);
 
         // Update HUD
         this.hud.update(
@@ -334,6 +379,12 @@ export class Game {
     this.tacticalDisplay.dispose();
     this.alertSystem.dispose();
     this.galacticMapOverlay.dispose();
+    this.engineSound.dispose();
+    this.photonSoundPool.dispose();
+    this.soundEffects.dispose();
+    this.voiceAnnouncer.dispose();
+    this.warpSoundSequence.dispose();
+    this.audioManager.dispose();
     this.ctx.engine.dispose();
   }
 }
