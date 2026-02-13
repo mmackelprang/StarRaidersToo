@@ -89,6 +89,11 @@ export class SoundEffects {
     this.audioManager.playOneShot('badIdea', ENVIRONMENT_VOLUME);
   }
 
+  /** Play a named clip at standard environment volume */
+  playClip(name: string): void {
+    this.audioManager.playOneShot(name, ENVIRONMENT_VOLUME);
+  }
+
   dispose(): void {
     // Nothing to clean up — one-shots manage their own lifecycle
   }
