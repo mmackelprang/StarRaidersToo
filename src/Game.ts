@@ -29,6 +29,7 @@ import { PhotonSoundPool } from '@/audio/PhotonSoundPool';
 import { SoundEffects } from '@/audio/SoundEffects';
 import { VoiceAnnouncer } from '@/audio/VoiceAnnouncer';
 import { WarpSoundSequence } from '@/audio/WarpSoundSequence';
+import { preloadAllAudio } from '@/audio/AudioPreloader';
 import { GamepadController } from '@/input/GamepadController';
 import { GalacticMap3D } from '@/ui/GalacticMap3D';
 import { PostProcessing } from '@/scene/PostProcessing';
@@ -84,7 +85,11 @@ export class Game {
     this.onGameEnd = options?.onGameEnd ?? null;
     this.perfMonitor = new PerformanceMonitor();
     this.ctx = createScene(canvas);
-    this.setupAudio();
+    this.init();
+  }
+
+  private async init(): Promise<void> {
+    await this.setupAudio();
     this.setupScene();
     this.setupInput();
     this.setupUI();
@@ -96,8 +101,9 @@ export class Game {
     return this.stateManager.settings.difficulty;
   }
 
-  private setupAudio(): void {
+  private async setupAudio(): Promise<void> {
     this.audioManager = new AudioManager();
+    await preloadAllAudio(this.audioManager);
     this.engineSound = new EngineSound(this.audioManager);
     this.photonSoundPool = new PhotonSoundPool(this.audioManager);
     this.soundEffects = new SoundEffects(this.audioManager);
@@ -438,7 +444,7 @@ export class Game {
             this.ship.shieldStrength,
             this.ship.energyStore,
             this.combatManager.enemyCount,
-            null, // Phase 4+ will compute nearest enemy distance
+            this.combatManager.getNearestEnemyDistance(),
           );
         }
       }

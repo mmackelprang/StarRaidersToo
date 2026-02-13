@@ -246,6 +246,17 @@ export class CombatManager {
     return this.station;
   }
 
+  /** Distance to nearest enemy, or null if no enemies in sector */
+  getNearestEnemyDistance(): number | null {
+    if (this.enemies.length === 0) return null;
+    let minDist = Infinity;
+    for (const enemy of this.enemies) {
+      const dist = enemy.position.length();
+      if (dist < minDist) minDist = dist;
+    }
+    return minDist;
+  }
+
   dispose(): void {
     this.clearSector();
     this.torpedoPool.dispose();

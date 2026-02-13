@@ -65,13 +65,19 @@ export class VoiceAnnouncer {
     let startTime = ctx.currentTime;
 
     for (const name of clipNames) {
-      const source = this.audioManager.playSound(name, false, 1.0);
-      if (source && source.buffer) {
-        // Schedule each clip after the previous one ends
-        source.stop();
-        source.start(startTime);
-        startTime += source.buffer.duration;
-      }
+      const buffer = this.audioManager.getBuffer(name);
+      if (!buffer) continue;
+
+      const source = ctx.createBufferSource();
+      source.buffer = buffer;
+
+      const gain = ctx.createGain();
+      gain.gain.value = 1.0;
+      source.connect(gain);
+      gain.connect(this.audioManager.getMasterGain());
+
+      source.start(startTime);
+      startTime += buffer.duration;
     }
 
     // Mark as done after estimated total duration
