@@ -285,12 +285,20 @@ export class Game {
         );
       },
       onWarpRequested: () => this.initiateWarp(),
-      onQuadrantSelected: () => {
+      onQuadrantSelected: (quadrant) => {
         this.galacticMapOverlay.updateDisplay(
           this.galaxyModel,
           this.ship.currentSectorNumber,
           this.ship.targetSectorNumber,
         );
+        // Announce quadrant name (matches iOS kohai.speak)
+        if (quadrant) {
+          const clipName = quadrant === 'alpha' ? 'AlphaSector'
+            : quadrant === 'beta' ? 'BetaSector'
+            : quadrant === 'gamma' ? 'GammaSector'
+            : 'DeltaSector';
+          this.soundEffects.playClip(clipName);
+        }
       },
     });
 
@@ -304,7 +312,9 @@ export class Game {
 
   private setupPostProcessing(): void {
     const canvas = this.ctx.engine.getRenderingCanvas()!;
-    this.postProcessing = new PostProcessing(canvas);
+    this.postProcessing = new PostProcessing(
+      canvas, this.ctx.scene, this.cameraRig.forwardCamera,
+    );
   }
 
   private toggleGalacticMap(): void {
@@ -317,6 +327,7 @@ export class Game {
       );
       this.galacticMapOverlay.show();
       this.hud.hide();
+      this.soundEffects.playClip('galacticMap');
     } else {
       this.galacticMapOverlay.hide();
       this.hud.show();
@@ -377,7 +388,9 @@ export class Game {
 
       // Populate sector after 1 more second (7s total from warp start)
       setTimeout(() => {
-        this.entitySpawner.populateSector(this.ship, this.galaxyModel);
+        this.entitySpawner.populateSector(this.ship, this.galaxyModel, () => {
+          this.soundEffects.refuelComplete();
+        });
       }, 1000);
     });
   }
