@@ -89,6 +89,11 @@ export class AudioManager {
     this.playSound(name, false, volume);
   }
 
+  /** Get a cached buffer by name (for direct-playback use) */
+  getBuffer(name: string): AudioBuffer | null {
+    return this.bufferCache.get(name) ?? null;
+  }
+
   /** Check if a sound is cached */
   hasSound(name: string): boolean {
     return this.bufferCache.has(name);

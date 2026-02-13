@@ -18,25 +18,21 @@ export class EngineSound {
 
   start(): void {
     if (this.source) return;
-    if (!this.audioManager.hasSound('ship_hum')) return;
+
+    const buffer = this.audioManager.getBuffer('ship_hum');
+    if (!buffer) return;
 
     const ctx = this.audioManager.getContext();
     this.source = ctx.createBufferSource();
-    this.source.buffer = this.audioManager.hasSound('ship_hum')
-      ? (null as any) // Will be set properly when audio files are available
-      : null;
-
-    // For now, use an oscillator as placeholder
-    const osc = ctx.createOscillator();
-    osc.type = 'sawtooth';
-    osc.frequency.value = 55; // Low hum
+    this.source.buffer = buffer;
+    this.source.loop = true;
 
     this.gainNode = ctx.createGain();
     this.gainNode.gain.value = 0;
 
-    osc.connect(this.gainNode);
+    this.source.connect(this.gainNode);
     this.gainNode.connect(this.audioManager.getMasterGain());
-    osc.start();
+    this.source.start();
   }
 
   /** Update engine volume based on ship speed (0-9) */
@@ -53,6 +49,10 @@ export class EngineSound {
 
   dispose(): void {
     this.stop();
+    if (this.source) {
+      try { this.source.stop(); } catch { /* already stopped */ }
+      this.source.disconnect();
+    }
     this.source = null;
     this.gainNode = null;
   }

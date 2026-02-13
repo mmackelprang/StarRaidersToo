@@ -11,14 +11,13 @@
  */
 
 import { Scene } from '@babylonjs/core/scene';
-import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder';
-import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial';
-import { Color3 } from '@babylonjs/core/Maths/math.color';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector';
 import { SectorObject } from '@/entities/SectorObject';
 import { ShipType, ObjectType } from '@/core/types';
 import { Constants } from '@/core/Constants';
-import { randRange, randIntRange } from '@/utils/MathUtils';
+import { randRange } from '@/utils/MathUtils';
+import { createHumonScoutModel } from '@/models/HumonScoutModel';
+import { createHumonDestroyerModel } from '@/models/HumonDestroyerModel';
 
 export enum ManeuverType {
   Zig = 'zig',
@@ -60,33 +59,12 @@ export class HumonShip extends SectorObject {
     // Initial fire countdown (shorter than normal interval for quicker first shot)
     this.cyclesUntilFireTorpedo = Math.floor(randRange(30, 340));
 
-    // Create placeholder geometry (Phase 6 will add proper models)
-    this.createPlaceholderMesh(scene);
-  }
-
-  private createPlaceholderMesh(scene: Scene): void {
-    // Simple box as placeholder until Phase 6 procedural models
-    const body = MeshBuilder.CreateBox(
-      `humon_body_${this.uniqueId}`,
-      { width: 4, height: 2, depth: 3 },
-      scene,
-    );
-    body.parent = this;
-
-    const mat = new StandardMaterial(`humon_mat_${this.uniqueId}`, scene);
-    switch (this.shipType) {
-      case ShipType.Scout:
-        mat.emissiveColor = new Color3(0.6, 0.1, 0.1);
-        break;
-      case ShipType.Fighter:
-        mat.emissiveColor = new Color3(0.7, 0.3, 0.0);
-        break;
-      case ShipType.Destroyer:
-        mat.emissiveColor = new Color3(0.8, 0.0, 0.2);
-        body.scaling = new Vector3(1.5, 1.2, 1.5);
-        break;
+    // Create proper model based on ship type
+    if (shipType === ShipType.Destroyer) {
+      createHumonDestroyerModel(scene, this);
+    } else {
+      createHumonScoutModel(scene, this);
     }
-    body.material = mat;
   }
 
   /**
