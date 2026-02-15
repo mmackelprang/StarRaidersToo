@@ -16,6 +16,7 @@ import { HudOverlay } from '@/ui/HudOverlay';
 import { GalacticMapOverlay } from '@/ui/GalacticMapOverlay';
 import { ScannerDisplay } from '@/ui/ScannerDisplay';
 import { TacticalDisplay } from '@/ui/TacticalDisplay';
+import { HelpOverlay } from '@/ui/HelpOverlay';
 import { AlertSystem } from '@/ui/AlertSystem';
 import { GalaxyMapModel } from '@/galaxy/GalaxyMapModel';
 import { CombatManager } from '@/combat/CombatManager';
@@ -52,6 +53,7 @@ export class Game {
   private galacticMapOverlay!: GalacticMapOverlay;
   private scannerDisplay!: ScannerDisplay;
   private tacticalDisplay!: TacticalDisplay;
+  private helpOverlay!: HelpOverlay;
   private alertSystem!: AlertSystem;
   private galaxyModel!: GalaxyMapModel;
   private combatManager!: CombatManager;
@@ -186,18 +188,21 @@ export class Game {
     this.inputManager = new InputManager(document.body);
     this.inputManager.invertedAxis = this.stateManager.settings.invertedAxis;
 
-    // Keyboard shortcuts
+    // Keyboard shortcuts — use e.code (physical key) for IME resilience on Windows
     window.addEventListener('keydown', (e) => {
-      switch (e.key.toLowerCase()) {
-        case 'v':
+      switch (e.code) {
+        case 'KeyV':
           this.viewModeManager.toggleForeAft();
           this.soundEffects.beep();
           break;
-        case 'g':
+        case 'KeyG':
           this.toggleGalacticMap();
           this.soundEffects.beep();
           break;
-        case 't':
+        case 'KeyH':
+          this.helpOverlay.toggle();
+          break;
+        case 'KeyT':
           // Toggle tactical display
           this.tacticalDisplay.toggle();
           if (this.tacticalDisplay.engaged) {
@@ -206,7 +211,7 @@ export class Game {
             this.scannerDisplay.hide();
           }
           break;
-        case ' ':
+        case 'Space':
           // Fire torpedo
           if (!this.ship.isCurrentlyInWarp && !this.gameOver) {
             const fired = this.combatManager.fireZylonTorpedo(
@@ -274,6 +279,7 @@ export class Game {
     this.scannerDisplay = new ScannerDisplay(parent);
     this.tacticalDisplay = new TacticalDisplay(parent);
     this.alertSystem = new AlertSystem(parent);
+    this.helpOverlay = new HelpOverlay(parent);
 
     this.galacticMapOverlay = new GalacticMapOverlay(parent, {
       onTargetChanged: (sectorIndex) => {
@@ -327,6 +333,7 @@ export class Game {
       );
       this.galacticMapOverlay.show();
       this.hud.hide();
+      this.helpOverlay.hide();
       this.soundEffects.playClip('galacticMap');
     } else {
       this.galacticMapOverlay.hide();
@@ -368,7 +375,11 @@ export class Game {
 
     // Play warp sound sequence and enable motion blur
     this.warpSoundSequence.play();
-    this.postProcessing.enableMotionBlur();
+    try {
+      this.postProcessing.enableMotionBlur();
+    } catch {
+      // GPU motion blur may fail on some hardware — warp still works without it
+    }
 
     // Start warp visual — resolves after 6 seconds
     this.warpEffect.start().then(() => {
@@ -538,6 +549,7 @@ export class Game {
     this.scannerDisplay.dispose();
     this.tacticalDisplay.dispose();
     this.alertSystem.dispose();
+    this.helpOverlay.dispose();
     this.galacticMapOverlay.dispose();
     this.galacticMap3D.dispose();
     this.postProcessing.dispose();

@@ -5,6 +5,9 @@
  * Keyboard controls (for development, not in original game):
  *   WASD / Arrow keys = ship steering
  *   Space = placeholder for fire
+ *
+ * Uses e.code (physical key position) instead of e.key so that an active IME
+ * on Windows (where e.key becomes "Process" for character keys) cannot break WASD.
  */
 
 import { JoystickController } from '@/input/JoystickController';
@@ -17,7 +20,7 @@ export interface InputState {
 
 export class InputManager {
   private joystick: JoystickController;
-  private keysDown = new Set<string>();
+  private codesDown = new Set<string>();
   invertedAxis = false;
 
   /** Keyboard thrust magnitude (matches joystick feel) */
@@ -26,9 +29,9 @@ export class InputManager {
   constructor(parentElement: HTMLElement) {
     this.joystick = new JoystickController(parentElement);
 
-    window.addEventListener('keydown', (e) => this.keysDown.add(e.key.toLowerCase()));
-    window.addEventListener('keyup', (e) => this.keysDown.delete(e.key.toLowerCase()));
-    window.addEventListener('blur', () => this.keysDown.clear());
+    window.addEventListener('keydown', (e) => this.codesDown.add(e.code));
+    window.addEventListener('keyup', (e) => this.codesDown.delete(e.code));
+    window.addEventListener('blur', () => this.codesDown.clear());
   }
 
   /**
@@ -45,17 +48,17 @@ export class InputManager {
       yThrust = this.joystick.yThrust;
     }
 
-    // Keyboard input (additive, for dev)
-    if (this.keysDown.has('w') || this.keysDown.has('arrowup')) {
+    // Keyboard input (additive) — uses e.code for IME resilience
+    if (this.codesDown.has('KeyW') || this.codesDown.has('ArrowUp')) {
       xThrust += InputManager.KB_THRUST;
     }
-    if (this.keysDown.has('s') || this.keysDown.has('arrowdown')) {
+    if (this.codesDown.has('KeyS') || this.codesDown.has('ArrowDown')) {
       xThrust -= InputManager.KB_THRUST;
     }
-    if (this.keysDown.has('a') || this.keysDown.has('arrowleft')) {
+    if (this.codesDown.has('KeyA') || this.codesDown.has('ArrowLeft')) {
       yThrust -= InputManager.KB_THRUST;
     }
-    if (this.keysDown.has('d') || this.keysDown.has('arrowright')) {
+    if (this.codesDown.has('KeyD') || this.codesDown.has('ArrowRight')) {
       yThrust += InputManager.KB_THRUST;
     }
 
