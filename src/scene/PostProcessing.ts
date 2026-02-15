@@ -13,21 +13,15 @@ import type { Scene } from '@babylonjs/core/scene';
 export class PostProcessing {
   private canvas: HTMLCanvasElement;
   private motionBlur: MotionBlurPostProcess | null = null;
+  private scene: Scene | null = null;
   private camera: Camera | null = null;
   private blurActive = false;
 
   constructor(canvas: HTMLCanvasElement, scene?: Scene, camera?: Camera) {
     this.canvas = canvas;
     if (scene && camera) {
+      this.scene = scene;
       this.camera = camera;
-      this.motionBlur = new MotionBlurPostProcess(
-        'warpMotionBlur', scene, 1.0, camera,
-      );
-      this.motionBlur.motionStrength = 1.0;
-      this.motionBlur.motionBlurSamples = 16;
-      this.motionBlur.isObjectBased = false;
-      // Start disabled — detach immediately
-      camera.detachPostProcess(this.motionBlur);
     }
   }
 
@@ -35,8 +29,14 @@ export class PostProcessing {
   enableMotionBlur(): void {
     if (this.blurActive) return;
     this.blurActive = true;
-    if (this.motionBlur && this.camera) {
-      this.camera.attachPostProcess(this.motionBlur);
+    if (this.scene && this.camera) {
+      // Create lazily so the pre-pass renderer is only active during warp
+      this.motionBlur = new MotionBlurPostProcess(
+        'warpMotionBlur', this.scene, 1.0, this.camera,
+      );
+      this.motionBlur.motionStrength = 1.0;
+      this.motionBlur.motionBlurSamples = 16;
+      this.motionBlur.isObjectBased = false;
     } else {
       // CSS fallback if no scene/camera provided
       this.canvas.style.filter = 'blur(2px) contrast(1.2)';
@@ -47,8 +47,9 @@ export class PostProcessing {
   disableMotionBlur(): void {
     if (!this.blurActive) return;
     this.blurActive = false;
-    if (this.motionBlur && this.camera) {
-      this.camera.detachPostProcess(this.motionBlur);
+    if (this.motionBlur) {
+      this.motionBlur.dispose();
+      this.motionBlur = null;
     } else {
       this.canvas.style.filter = 'none';
     }
