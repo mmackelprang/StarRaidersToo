@@ -12,10 +12,16 @@ No Mac or Xcode required - pure Python.
 Usage:
     python scn2glb.py <input.scn> <output.glb>
     python scn2glb.py <input_dir/> <output_dir/>
+    python scn2glb.py --max-texture 1024 <input_dir/> <output_dir/>
+
+Options:
+    --max-texture N   Downscale textures to NxN max (default: 2048).
+                      Requires Pillow. Set 0 to embed at original size.
+    --high-poly       Pick the largest geometry instead of the first LOD.
 
 Requirements:
     Python 3.8+ (uses plistlib.UID)
-    No external dependencies.
+    Pillow (optional, for texture downscaling)
 
 Limitations:
     - Parametric geometry (SCNBox, SCNSphere, etc.) is skipped
@@ -24,6 +30,7 @@ Limitations:
     - Metallic+roughness textures are not channel-packed (set as scalars)
 """
 
+import io
 import json
 import math
 import os
@@ -31,6 +38,15 @@ import plistlib
 import struct
 import sys
 from pathlib import Path
+
+try:
+    from PIL import Image
+    HAS_PILLOW = True
+except ImportError:
+    HAS_PILLOW = False
+
+# Default max texture dimension (width or height)
+DEFAULT_MAX_TEXTURE = 2048
 
 
 # ---------------------------------------------------------------------------
@@ -342,8 +358,37 @@ def align4(buf: bytearray):
         buf.append(0)
 
 
+def resize_texture(png_data: bytes, max_size: int) -> bytes:
+    """Downscale a PNG texture to max_size x max_size if larger.
+
+    Returns PNG bytes (resized if needed, original if small enough or
+    Pillow unavailable).
+    """
+    if max_size <= 0 or not HAS_PILLOW:
+        return png_data
+    try:
+        img = Image.open(io.BytesIO(png_data))
+        w, h = img.size
+        if w <= max_size and h <= max_size:
+            return png_data
+        # Scale proportionally so the longest edge = max_size
+        scale = max_size / max(w, h)
+        new_w = max(1, int(w * scale))
+        new_h = max(1, int(h * scale))
+        img = img.resize((new_w, new_h), Image.LANCZOS)
+        out = io.BytesIO()
+        img.save(out, format='PNG', optimize=True)
+        orig_kb = len(png_data) // 1024
+        new_kb = out.tell() // 1024
+        print(f"      resized {w}x{h} -> {new_w}x{new_h}  ({orig_kb:,}KB -> {new_kb:,}KB)")
+        return out.getvalue()
+    except Exception as ex:
+        print(f"      Warning: resize failed ({ex}), using original")
+        return png_data
+
+
 def build_glb(sources: dict, elements: list, texture_files: dict,
-              mesh_name: str) -> bytes:
+              mesh_name: str, max_texture: int = DEFAULT_MAX_TEXTURE) -> bytes:
     """Build a complete .glb binary from extracted geometry data."""
     buf = bytearray()
     views = []
@@ -442,6 +487,9 @@ def build_glb(sources: dict, elements: list, texture_files: dict,
             print(f"    Warning: Could not read texture {tex_path}: {ex}")
             continue
 
+        # Downscale if larger than max
+        png_data = resize_texture(png_data, max_texture)
+
         align4(buf)
         bv_off = len(buf)
         buf.extend(png_data)
@@ -453,8 +501,12 @@ def build_glb(sources: dict, elements: list, texture_files: dict,
             'byteLength': len(png_data),
         })
 
+        # Detect MIME type from file extension
+        ext = Path(tex_path).suffix.lower()
+        mime = 'image/jpeg' if ext in ('.jpg', '.jpeg') else 'image/png'
+
         img_idx = len(images_list)
-        images_list.append({'bufferView': bv_idx, 'mimeType': 'image/png'})
+        images_list.append({'bufferView': bv_idx, 'mimeType': mime})
 
         tex_idx = len(textures_list)
         textures_list.append({'source': img_idx, 'sampler': 0})
@@ -538,7 +590,9 @@ PARAMETRIC_TYPES = (
 )
 
 
-def convert(scn_path: str, glb_path: str, textures_base: Path = None) -> bool:
+def convert(scn_path: str, glb_path: str, textures_base: Path = None,
+            max_texture: int = DEFAULT_MAX_TEXTURE,
+            high_poly: bool = False) -> bool:
     """Convert a single .scn file to .glb.  Returns True on success."""
     scn_path = Path(scn_path)
     print(f"\n{'=' * 60}")
@@ -564,18 +618,34 @@ def convert(scn_path: str, glb_path: str, textures_base: Path = None) -> bool:
 
     print(f"  Found {len(geos)} SCNGeometry object(s)")
 
-    # --- Pick the best geometry (first one with vertex data) ---
+    # --- Pick geometry ---
+    # Collect all geometries that have vertex data
+    MIN_VERTS = 500  # skip bounding boxes / trivial meshes
+    candidates = []
+    for gi, go in geos:
+        src = extract_sources(ar, go)
+        if 'POSITION' in src:
+            cnt = src['POSITION']['count']
+            candidates.append((gi, go, cnt))
+
+    if not candidates:
+        pass  # handled below
+    elif high_poly:
+        # Pick the largest mesh
+        candidates.sort(key=lambda c: c[2], reverse=True)
+    else:
+        # Pick the smallest mesh above MIN_VERTS (web-friendly LOD)
+        above = [c for c in candidates if c[2] >= MIN_VERTS]
+        if above:
+            above.sort(key=lambda c: c[2])
+            candidates = above
+        # else: all below threshold, keep original order
+
     best_geom = None
     best_idx = -1
     best_count = 0
-    for geom_idx, geom in geos:
-        sources = extract_sources(ar, geom)
-        if 'POSITION' in sources:
-            count = sources['POSITION']['count']
-            if best_geom is None or count > best_count:
-                best_geom = geom
-                best_idx = geom_idx
-                best_count = count
+    if candidates:
+        best_idx, best_geom, best_count = candidates[0]
 
     if best_geom is None:
         print(f"  ERROR: no geometry has vertex position data")
@@ -637,7 +707,7 @@ def convert(scn_path: str, glb_path: str, textures_base: Path = None) -> bool:
                 print(f"    Texture [{ch}]: {rel_path} [NOT FOUND]")
 
     # --- Build and write .glb ---
-    glb = build_glb(sources, elems, resolved_textures, mesh_name)
+    glb = build_glb(sources, elems, resolved_textures, mesh_name, max_texture)
 
     out_path = Path(glb_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -652,18 +722,42 @@ def convert(scn_path: str, glb_path: str, textures_base: Path = None) -> bool:
 
 
 def main():
-    if len(sys.argv) < 3:
+    args = sys.argv[1:]
+    max_texture = DEFAULT_MAX_TEXTURE
+    high_poly = False
+
+    # Parse options
+    while args and args[0].startswith('--'):
+        if args[0] == '--max-texture' and len(args) > 1:
+            max_texture = int(args[1])
+            args = args[2:]
+        elif args[0] == '--high-poly':
+            high_poly = True
+            args = args[1:]
+        else:
+            print(f"Unknown option: {args[0]}")
+            args = args[1:]
+
+    if len(args) < 2:
         print(__doc__)
         print("Usage:")
-        print("  python scn2glb.py <input.scn> <output.glb>")
-        print("  python scn2glb.py <input_dir/> <output_dir/>")
+        print("  python scn2glb.py [options] <input.scn> <output.glb>")
+        print("  python scn2glb.py [options] <input_dir/> <output_dir/>")
+        print()
+        print("Options:")
+        print(f"  --max-texture N   Max texture dimension (default: {DEFAULT_MAX_TEXTURE})")
+        print("  --high-poly       Pick largest geometry instead of lowest LOD")
         sys.exit(1)
 
-    inp = Path(sys.argv[1])
-    out = Path(sys.argv[2])
+    inp = Path(args[0])
+    out = Path(args[1])
+
+    if max_texture > 0 and not HAS_PILLOW:
+        print("Warning: Pillow not installed, textures will be embedded at original size.")
+        print("  Install with: pip install Pillow")
 
     if inp.is_file():
-        ok = convert(inp, out, inp.parent)
+        ok = convert(inp, out, inp.parent, max_texture, high_poly)
         sys.exit(0 if ok else 1)
     elif inp.is_dir():
         out.mkdir(parents=True, exist_ok=True)
@@ -671,7 +765,7 @@ def main():
         skipped = 0
         for scn in sorted(inp.glob('*.scn')):
             glb = out / (scn.stem + '.glb')
-            if convert(scn, glb, inp):
+            if convert(scn, glb, inp, max_texture, high_poly):
                 converted += 1
             else:
                 skipped += 1
